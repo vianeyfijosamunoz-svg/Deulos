@@ -4,7 +4,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
-local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -12,30 +12,39 @@ local Mouse = LocalPlayer:GetMouse()
 
 local Config = {
     AimAssist = false,
+    SilentAim = false,
     TP = false,
     TeamCheck = true,
     VisibleCheck = true,
     FOV = 220,
-    Smoothness = 0.28,
-    Prediction = 0.18,
-    TPCooldown = 0.005,
+    Smoothness = 0.22,
+    Prediction = 0.16,
+    TPCooldown = 0.003,
     WalkSpeed = 16,
     InfiniteJump = false,
     Noclip = false,
     ESP = false,
     FOVCircle = false,
-    Triggerbot = false,
-    Tracers = false,
     HealthESP = true,
     DistanceESP = true,
-    AutoBlock = false,
-    MenuKey = Enum.KeyCode.RightShift,
+    AutoKnife = true,
+    HitboxExpander = false,
+    HitboxSize = 6,
+    HitboxTransparency = 0.75,
+    HitboxHead = true,
+    HitboxHRP = true,
 }
 
 local LastTP = 0
 local Loaded = false
 local NoclipConnection = nil
 local HealthCache = {}
+local LastESPUpdate = 0
+local CurrentTarget = nil
+local SilentTarget = nil
+local HitboxCache = {}
+local LastHitboxUpdate = 0
+
 local ESPFolder = Instance.new("Folder")
 ESPFolder.Name = "SexusESP"
 ESPFolder.Parent = CoreGui
@@ -136,20 +145,61 @@ local function AimAt(part)
     Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pos), Config.Smoothness)
 end
 
-local function DoTP(eHrp)
-    local _, myHRP, myHum = GetChar()
-    if not myHRP or not eHrp then return end
+local function AutoEquipKnife()
+    if not Config.AutoKnife then return end
+    local char = LocalPlayer.Character
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not char or not backpack then return end
+
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            local name = tool.Name:lower()
+            if name:find("knife") or name:find("cuchillo") or name:find("blade") or name:find("dagger") or name:find("karambit") then
+                return
+            end
+        end
+    end
+
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            local name = tool.Name:lower()
+            if name:find("knife") or name:find("cuchillo") or name:find("blade") or name:find("dagger") or name:find("karambit") then
+                tool.Parent = char
+                break
+            end
+        end
+    end
+end
+
+local function DoTP(eHrp, targetPlayer)
+    local char, myHRP, myHum = GetChar()
+    if not myHRP or not eHrp or not char then return end
     local now = tick()
     if now - LastTP < Config.TPCooldown then return end
     LastTP = now
 
     pcall(function()
         myHRP.Anchored = false
-        if myHum then myHum.PlatformStand = false end
-        myHRP.CFrame = CFrame.new(eHrp.Position + Vector3.new(0, 0.15, 0))
+        if myHum then
+            myHum.PlatformStand = true
+            myHum:ChangeState(Enum.HumanoidStateType.Physics)
+        end
+
+        local targetPos = eHrp.Position + Vector3.new(0, -4.9, 0)
+        myHRP.CFrame = CFrame.new(targetPos) * CFrame.Angles(math.rad(-90), math.rad(180), 0)
         myHRP.AssemblyLinearVelocity = Vector3.zero
         myHRP.AssemblyAngularVelocity = Vector3.zero
     end)
+
+    if targetPlayer and targetPlayer ~= CurrentTarget then
+        CurrentTarget = targetPlayer
+        Rayfield:Notify({
+            Title = "RAGEBOTING",
+            Content = "killing " .. targetPlayer.Name,
+            Duration = 1.6,
+            Image = 4483362458,
+        })
+    end
 end
 
 local function SetNoclip(state)
@@ -190,16 +240,16 @@ local function UpdateESP()
             if char and hrp and head and hum then
                 local highlight = Instance.new("Highlight")
                 highlight.Adornee = char
-                highlight.FillColor = Color3.fromRGB(255, 50, 50)
+                highlight.FillColor = Color3.fromRGB(255, 40, 40)
                 highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                highlight.FillTransparency = 0.6
+                highlight.FillTransparency = 0.55
                 highlight.OutlineTransparency = 0
                 highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                 highlight.Parent = ESPFolder
 
                 local bill = Instance.new("BillboardGui")
                 bill.Adornee = head
-                bill.Size = UDim2.fromOffset(140, 40)
+                bill.Size = UDim2.fromOffset(140, 42)
                 bill.StudsOffset = Vector3.new(0, 2.6, 0)
                 bill.AlwaysOnTop = true
                 bill.Parent = ESPFolder
@@ -208,7 +258,7 @@ local function UpdateESP()
                 nameLabel.Size = UDim2.new(1, 0, 0, 16)
                 nameLabel.BackgroundTransparency = 1
                 nameLabel.Text = plr.Name
-                nameLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+                nameLabel.TextColor3 = Color3.fromRGB(255, 70, 70)
                 nameLabel.TextStrokeTransparency = 0.2
                 nameLabel.Font = Enum.Font.GothamBold
                 nameLabel.TextSize = 13
@@ -217,7 +267,7 @@ local function UpdateESP()
                 if Config.HealthESP then
                     local hpLabel = Instance.new("TextLabel")
                     hpLabel.Size = UDim2.new(1, 0, 0, 14)
-                    hpLabel.Position = UDim2.fromOffset(0, 14)
+                    hpLabel.Position = UDim2.fromOffset(0, 15)
                     hpLabel.BackgroundTransparency = 1
                     hpLabel.Text = math.floor(hum.Health) .. " HP"
                     hpLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
@@ -231,43 +281,14 @@ local function UpdateESP()
                     local dist = math.floor((hrp.Position - myHRP.Position).Magnitude)
                     local distLabel = Instance.new("TextLabel")
                     distLabel.Size = UDim2.new(1, 0, 0, 14)
-                    distLabel.Position = UDim2.fromOffset(0, Config.HealthESP and 26 or 14)
+                    distLabel.Position = UDim2.fromOffset(0, Config.HealthESP and 28 or 15)
                     distLabel.BackgroundTransparency = 1
                     distLabel.Text = dist .. " studs"
-                    distLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+                    distLabel.TextColor3 = Color3.fromRGB(180, 180, 255)
                     distLabel.TextStrokeTransparency = 0.3
                     distLabel.Font = Enum.Font.Gotham
                     distLabel.TextSize = 11
                     distLabel.Parent = bill
-                end
-
-                if Config.Tracers then
-                    local line = Drawing.new("Line")
-                    line.Thickness = 1.2
-                    line.Color = Color3.fromRGB(255, 60, 60)
-                    line.Transparency = 0.4
-                    line.Visible = true
-
-                    local from = Camera:WorldToViewportPoint(myHRP.Position)
-                    local to = Camera:WorldToViewportPoint(hrp.Position)
-                    line.From = Vector2.new(from.X, from.Y)
-                    line.To = Vector2.new(to.X, to.Y)
-
-                    task.spawn(function()
-                        while line and Config.Tracers and Config.ESP do
-                            local myPos = select(2, GetChar())
-                            if not myPos or not hrp or not hrp.Parent then
-                                line:Remove()
-                                break
-                            end
-                            local f = Camera:WorldToViewportPoint(myPos.Position)
-                            local t = Camera:WorldToViewportPoint(hrp.Position)
-                            line.From = Vector2.new(f.X, f.Y)
-                            line.To = Vector2.new(t.X, t.Y)
-                            task.wait()
-                        end
-                        if line then line:Remove() end
-                    end)
                 end
             end
         end
@@ -285,7 +306,7 @@ local function CheckKills()
                     Rayfield:Notify({
                         Title = "KILL",
                         Content = "Mataste a " .. plr.Name,
-                        Duration = 2.5,
+                        Duration = 2.2,
                         Image = 4483362458,
                     })
                 end
@@ -295,7 +316,7 @@ local function CheckKills()
                     Rayfield:Notify({
                         Title = "KILL",
                         Content = "Mataste a " .. plr.Name,
-                        Duration = 2.5,
+                        Duration = 2.2,
                         Image = 4483362458,
                     })
                     HealthCache[plr.UserId] = 0
@@ -305,23 +326,115 @@ local function CheckKills()
     end
 end
 
-local function TriggerbotTick()
-    if not Config.Triggerbot then return end
-    local target = Mouse.Target
-    if target and target.Parent then
-        local hum = target.Parent:FindFirstChildOfClass("Humanoid") or target.Parent.Parent:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 then
-            local plr = Players:GetPlayerFromCharacter(hum.Parent)
-            if plr and IsEnemy(plr) then
-                mouse1click()
-            end
+local function ApplyHitbox(plr)
+    local char, hrp, hum, head = GetChar(plr)
+    if not char or not hrp then return end
+
+    if not HitboxCache[plr.UserId] then
+        HitboxCache[plr.UserId] = {}
+    end
+    local cache = HitboxCache[plr.UserId]
+
+    if Config.HitboxHRP then
+        if not cache.HRP then
+            cache.HRP = {
+                Size = hrp.Size,
+                Transparency = hrp.Transparency,
+            }
+        end
+        if hrp.Size ~= Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize) then
+            hrp.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
+            hrp.Transparency = Config.HitboxTransparency
+        end
+    end
+
+    if Config.HitboxHead and head then
+        if not cache.Head then
+            cache.Head = {
+                Size = head.Size,
+                Transparency = head.Transparency,
+            }
+        end
+        local headSize = Config.HitboxSize * 0.7
+        if head.Size ~= Vector3.new(headSize, headSize, headSize) then
+            head.Size = Vector3.new(headSize, headSize, headSize)
+            head.Transparency = Config.HitboxTransparency
         end
     end
 end
 
+local function ResetHitbox(plr)
+    local cache = HitboxCache[plr.UserId]
+    if not cache then return end
+
+    local char = plr.Character
+    if not char then
+        HitboxCache[plr.UserId] = nil
+        return
+    end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local head = char:FindFirstChild("Head")
+
+    if hrp and cache.HRP then
+        hrp.Size = cache.HRP.Size
+        hrp.Transparency = cache.HRP.Transparency
+    end
+    if head and cache.Head then
+        head.Size = cache.Head.Size
+        head.Transparency = cache.Head.Transparency
+    end
+
+    HitboxCache[plr.UserId] = nil
+end
+
+local function UpdateHitboxes()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if IsEnemy(plr) then
+            ApplyHitbox(plr)
+        else
+            ResetHitbox(plr)
+        end
+    end
+end
+
+local function ClearAllHitboxes()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        ResetHitbox(plr)
+    end
+    table.clear(HitboxCache)
+end
+
+workspace.DescendantAdded:Connect(function(obj)
+    if obj:IsA("Sound") then
+        local name = obj.Name:lower()
+        if name:find("gun") or name:find("shot") or name:find("fire") or name:find("pew") or name:find("bullet") or name:find("shoot") or name:find("weapon") then
+            task.wait()
+            obj.SoundId = "rbxassetid://9113082604"
+            obj.Volume = 2
+            obj.PlaybackSpeed = 1.1
+        end
+    end
+end)
+
+local mt = getrawmetatable(game)
+local oldIndex = mt.__index
+setreadonly(mt, false)
+
+mt.__index = newcclosure(function(self, key)
+    if Config.SilentAim and key == "Hit" and self == Mouse then
+        if SilentTarget and SilentTarget.Parent then
+            return SilentTarget.CFrame
+        end
+    end
+    return oldIndex(self, key)
+end)
+
+setreadonly(mt, true)
+
 local Window = Rayfield:CreateWindow({
     Name = "Sexus Hub",
-    LoadingTitle = "sexus hub | LOADING...",
+    LoadingTitle = "sexus hub",
     LoadingSubtitle = ".gg/tvYWHS2B8",
     Theme = "Default",
     ConfigurationSaving = {
@@ -354,29 +467,116 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateToggle({
-    Name = "TP Enemigo",
+    Name = "Silent Aim",
+    CurrentValue = false,
+    Flag = "SilentAim",
+    Callback = function(Value)
+        Config.SilentAim = Value
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Kill All",
     CurrentValue = false,
     Flag = "TP",
     Callback = function(Value)
         Config.TP = Value
+        if not Value then
+            CurrentTarget = nil
+            local _, _, hum = GetChar()
+            if hum then
+                hum.PlatformStand = false
+            end
+        end
     end,
 })
 
 MainTab:CreateToggle({
-    Name = "Triggerbot",
-    CurrentValue = false,
-    Flag = "Triggerbot",
+    Name = "Auto Equip Knife",
+    CurrentValue = true,
+    Flag = "AutoKnife",
     Callback = function(Value)
-        Config.Triggerbot = Value
+        Config.AutoKnife = Value
+    end,
+})
+
+MainTab:CreateSection("Hitbox")
+
+MainTab:CreateToggle({
+    Name = "Hitbox Expander",
+    CurrentValue = false,
+    Flag = "HitboxExpander",
+    Callback = function(Value)
+        Config.HitboxExpander = Value
+        if not Value then
+            ClearAllHitboxes()
+        end
     end,
 })
 
 MainTab:CreateToggle({
-    Name = "Auto Block (si el juego lo permite)",
-    CurrentValue = false,
-    Flag = "AutoBlock",
+    Name = "Expand Head",
+    CurrentValue = true,
+    Flag = "HitboxHead",
     Callback = function(Value)
-        Config.AutoBlock = Value
+        Config.HitboxHead = Value
+        if not Value then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                local cache = HitboxCache[plr.UserId]
+                if cache and cache.Head then
+                    local head = plr.Character and plr.Character:FindFirstChild("Head")
+                    if head then
+                        head.Size = cache.Head.Size
+                        head.Transparency = cache.Head.Transparency
+                    end
+                    cache.Head = nil
+                end
+            end
+        end
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Expand HRP",
+    CurrentValue = true,
+    Flag = "HitboxHRP",
+    Callback = function(Value)
+        Config.HitboxHRP = Value
+        if not Value then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                local cache = HitboxCache[plr.UserId]
+                if cache and cache.HRP then
+                    local hrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        hrp.Size = cache.HRP.Size
+                        hrp.Transparency = cache.HRP.Transparency
+                    end
+                    cache.HRP = nil
+                end
+            end
+        end
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Hitbox Size",
+    Range = {2, 25},
+    Increment = 0.5,
+    CurrentValue = 6,
+    Flag = "HitboxSize",
+    Callback = function(Value)
+        Config.HitboxSize = Value
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Hitbox Transparency",
+    Range = {0, 1},
+    Increment = 0.05,
+    CurrentValue = 0.75,
+    Flag = "HitboxTransparency",
+    Callback = function(Value)
+        Config.HitboxTransparency = Value
     end,
 })
 
@@ -457,16 +657,7 @@ VisualTab:CreateToggle({
 })
 
 VisualTab:CreateToggle({
-    Name = "Tracers",
-    CurrentValue = false,
-    Flag = "Tracers",
-    Callback = function(Value)
-        Config.Tracers = Value
-    end,
-})
-
-VisualTab:CreateToggle({
-    Name = "Health Bar ESP",
+    Name = "Health ESP",
     CurrentValue = true,
     Flag = "HealthESP",
     Callback = function(Value)
@@ -502,7 +693,7 @@ SettingsTab:CreateSlider({
     Name = "Smoothness",
     Range = {5, 50},
     Increment = 1,
-    CurrentValue = 28,
+    CurrentValue = 22,
     Flag = "Smoothness",
     Callback = function(Value)
         Config.Smoothness = Value / 100
@@ -513,36 +704,24 @@ SettingsTab:CreateSlider({
     Name = "Prediction",
     Range = {0, 50},
     Increment = 1,
-    CurrentValue = 18,
+    CurrentValue = 16,
     Flag = "Prediction",
     Callback = function(Value)
         Config.Prediction = Value / 100
     end,
 })
 
-SettingsTab:CreateSection("TP Settings")
+SettingsTab:CreateSection("Kill All Settings")
 
 SettingsTab:CreateSlider({
     Name = "TP Cooldown",
-    Range = {1, 50},
+    Range = {1, 30},
     Increment = 1,
     Suffix = "ms",
-    CurrentValue = 5,
+    CurrentValue = 3,
     Flag = "TPCooldown",
     Callback = function(Value)
         Config.TPCooldown = Value / 1000
-    end,
-})
-
-SettingsTab:CreateSection("Keybind")
-
-SettingsTab:CreateKeybind({
-    Name = "Abrir / Cerrar Menú",
-    CurrentKeybind = "RightShift",
-    HoldToInteract = false,
-    Flag = "MenuKey",
-    Callback = function()
-        -- Rayfield ya maneja el toggle interno, este es solo visual
     end,
 })
 
@@ -579,28 +758,48 @@ RunService.Heartbeat:Connect(function()
         if part then AimAt(part) end
     end
 
+    if Config.SilentAim then
+        local _, part = GetBestEnemy()
+        SilentTarget = part
+    else
+        SilentTarget = nil
+    end
+
     if Config.TP then
+        AutoEquipKnife()
         local plr = GetClosestEnemy3D()
         if plr then
             local _, eHrp = GetChar(plr)
-            if eHrp then DoTP(eHrp) end
+            if eHrp then
+                DoTP(eHrp, plr)
+            end
+        else
+            CurrentTarget = nil
         end
     end
 
-    if Config.Triggerbot then
-        TriggerbotTick()
+    if Config.ESP and tick() - LastESPUpdate > 0.35 then
+        LastESPUpdate = tick()
+        UpdateESP()
     end
 
-    if Config.ESP then
-        UpdateESP()
+    if Config.HitboxExpander then
+        if tick() - LastHitboxUpdate > 0.15 then
+            LastHitboxUpdate = tick()
+            UpdateHitboxes()
+        end
+    elseif next(HitboxCache) then
+        ClearAllHitboxes()
     end
 
     CheckKills()
 end)
 
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.4)
+    task.wait(0.35)
     LastTP = 0
+    CurrentTarget = nil
+    SilentTarget = nil
     local _, _, hum = GetChar()
     if hum then hum.WalkSpeed = Config.WalkSpeed end
     if Config.Noclip then SetNoclip(true) end
@@ -608,14 +807,38 @@ end)
 
 Players.PlayerRemoving:Connect(function(plr)
     HealthCache[plr.UserId] = nil
+    HitboxCache[plr.UserId] = nil
+    if CurrentTarget == plr then
+        CurrentTarget = nil
+    end
 end)
+
+Players.PlayerAdded:Connect(function(plr)
+    plr.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if Config.HitboxExpander and IsEnemy(plr) then
+            ApplyHitbox(plr)
+        end
+    end)
+end)
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    if plr ~= LocalPlayer then
+        plr.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            if Config.HitboxExpander and IsEnemy(plr) then
+                ApplyHitbox(plr)
+            end
+        end)
+    end
+end
 
 Loaded = true
 
 Rayfield:Notify({
     Title = "Sexus Hub",
-    Content = "Cargado correctamente",
-    Duration = 3.5,
+    Content = "Cargado",
+    Duration = 2.5,
     Image = 4483362458,
 })
 
