@@ -1,98 +1,53 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 local CoreGui = game:GetService("CoreGui")
-local SoundService = game:GetService("SoundService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
 
 local Config = {
     AimAssist = false,
     TP = false,
-    KnifeAI = false,
-    KillAll = false,
     TeamCheck = true,
     VisibleCheck = true,
-    FOV = 180,
-    Smoothness = 0.14,
-    Prediction = 0.15,
-    TPCooldown = 0.10,
-    KnifeDelay = 0.05,
-    UIKey = Enum.KeyCode.RightShift,
+    FOV = 220,
+    Smoothness = 0.28,
+    Prediction = 0.18,
+    TPCooldown = 0.005,
+    WalkSpeed = 16,
+    InfiniteJump = false,
+    Noclip = false,
+    ESP = false,
+    FOVCircle = false,
+    Triggerbot = false,
+    Tracers = false,
+    HealthESP = true,
+    DistanceESP = true,
+    AutoBlock = false,
+    MenuKey = Enum.KeyCode.RightShift,
 }
 
-local Connections = {}
-local Loaded = false
 local LastTP = 0
-local LastKnife = 0
+local Loaded = false
+local NoclipConnection = nil
 local HealthCache = {}
-local CurrentTarget = nil
+local ESPFolder = Instance.new("Folder")
+ESPFolder.Name = "SexusESP"
+ESPFolder.Parent = CoreGui
 
-local Theme = {
-    Bg = Color3.fromRGB(12, 12, 16),
-    Panel = Color3.fromRGB(16, 16, 22),
-    Card = Color3.fromRGB(22, 22, 30),
-    Accent = Color3.fromRGB(80, 160, 255),
-    Text = Color3.fromRGB(235, 235, 245),
-    Dim = Color3.fromRGB(140, 140, 155),
-    Green = Color3.fromRGB(0, 185, 95),
-    Red = Color3.fromRGB(220, 50, 60),
-}
-
-local function Notify(msg, color, t)
-    t = t or 1.3
-    color = color or Theme.Accent
-    local sg = Instance.new("ScreenGui")
-    sg.Parent = CoreGui
-    local f = Instance.new("Frame")
-    f.Size = UDim2.fromOffset(280, 36)
-    f.Position = UDim2.new(1, -300, 0.5, -18)
-    f.BackgroundColor3 = Theme.Panel
-    f.BorderSizePixel = 0
-    f.Parent = sg
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
-    local s = Instance.new("UIStroke", f)
-    s.Color = color
-    s.Thickness = 1.4
-    local bar = Instance.new("Frame")
-    bar.Size = UDim2.fromOffset(3, 24)
-    bar.Position = UDim2.fromOffset(6, 6)
-    bar.BackgroundColor3 = color
-    bar.BorderSizePixel = 0
-    bar.Parent = f
-    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
-    local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(1, -20, 1, 0)
-    l.Position = UDim2.fromOffset(16, 0)
-    l.BackgroundTransparency = 1
-    l.Text = msg
-    l.Font = Enum.Font.GothamBold
-    l.TextSize = 13
-    l.TextColor3 = Theme.Text
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Parent = f
-    f.Position = UDim2.new(1, 20, 0.5, -18)
-    TweenService:Create(f, TweenInfo.new(0.25), {Position = UDim2.new(1, -300, 0.5, -18)}):Play()
-    task.delay(t, function()
-        TweenService:Create(f, TweenInfo.new(0.2), {Position = UDim2.new(1, 20, 0.5, -18)}):Play()
-        task.delay(0.25, function() sg:Destroy() end)
-    end)
-end
-
-local function PlayBubble()
-    pcall(function()
-        local s = Instance.new("Sound")
-        s.SoundId = "rbxassetid://9117424178"
-        s.Volume = 0.25
-        s.PlaybackSpeed = 1.15
-        s.Parent = SoundService
-        s:Play()
-        task.delay(0.8, function() s:Destroy() end)
-    end)
-end
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Thickness = 1.5
+FOVCircle.NumSides = 64
+FOVCircle.Radius = Config.FOV
+FOVCircle.Filled = false
+FOVCircle.Visible = false
+FOVCircle.Color = Color3.fromRGB(80, 160, 255)
+FOVCircle.Transparency = 0.3
 
 local function GetChar(plr)
     plr = plr or LocalPlayer
@@ -107,16 +62,12 @@ local function GetChar(plr)
 end
 
 local function IsEnemy(plr)
-    if plr == LocalPlayer then return false end
-    if not plr.Character then return false end
-    if Config.TeamCheck then
-        if LocalPlayer.Team and plr.Team and LocalPlayer.Team == plr.Team then
-            return false
-        end
+    if plr == LocalPlayer or not plr.Character then return false end
+    if Config.TeamCheck and LocalPlayer.Team and plr.Team and LocalPlayer.Team == plr.Team then
+        return false
     end
     local _, hrp = GetChar(plr)
-    if not hrp then return false end
-    return true
+    return hrp ~= nil
 end
 
 local function IsVisible(part)
@@ -130,7 +81,7 @@ local function IsVisible(part)
     return result.Instance:IsDescendantOf(part.Parent)
 end
 
-local function GetBestEnemy(needVisible)
+local function GetBestEnemy()
     local best, bestPart, bestDist = nil, nil, Config.FOV
     local center = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y * 0.5)
 
@@ -138,12 +89,12 @@ local function GetBestEnemy(needVisible)
         if IsEnemy(plr) then
             local char, hrp, hum, head = GetChar(plr)
             if char and head then
-                if needVisible and Config.VisibleCheck and not IsVisible(head) then continue end
-                local sp, on = Camera:WorldToViewportPoint(head.Position)
-                if on then
-                    local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-                    if d < bestDist then
-                        bestDist = d
+                if Config.VisibleCheck and not IsVisible(head) then continue end
+                local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
+                if onScreen then
+                    local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                    if dist < bestDist then
+                        bestDist = dist
                         best = plr
                         bestPart = head
                     end
@@ -158,6 +109,7 @@ local function GetClosestEnemy3D()
     local best, bestPart, bestDist = nil, nil, math.huge
     local myHRP = select(2, GetChar())
     if not myHRP then return end
+
     for _, plr in ipairs(Players:GetPlayers()) do
         if IsEnemy(plr) then
             local _, hrp, hum, head = GetChar(plr)
@@ -178,7 +130,7 @@ local function AimAt(part)
     if not part then return end
     local pos = part.Position
     local vel = part.AssemblyLinearVelocity
-    if vel.Magnitude > 0.4 then
+    if vel.Magnitude > 0.3 then
         pos = pos + vel * Config.Prediction
     end
     Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pos), Config.Smoothness)
@@ -190,109 +142,162 @@ local function DoTP(eHrp)
     local now = tick()
     if now - LastTP < Config.TPCooldown then return end
     LastTP = now
+
     pcall(function()
         myHRP.Anchored = false
-        if myHum then
-            myHum.PlatformStand = false
-        end
-        myHRP.CFrame = CFrame.new(eHrp.Position + Vector3.new(0, 0.3, 0), eHrp.Position)
+        if myHum then myHum.PlatformStand = false end
+        myHRP.CFrame = CFrame.new(eHrp.Position + Vector3.new(0, 0.15, 0))
         myHRP.AssemblyLinearVelocity = Vector3.zero
         myHRP.AssemblyAngularVelocity = Vector3.zero
     end)
 end
 
-local function FireKnife(targetPos)
-    pcall(function()
-        for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
-            if v:IsA("RemoteEvent") then
-                local n = v.Name:lower()
-                if n:find("knife") or n:find("throw") or n:find("slash") or n:find("attack") or n:find("damage") or n:find("hit") or n:find("combat") then
-                    pcall(function()
-                        v:FireServer(targetPos)
-                        v:FireServer(targetPos, true)
-                        v:FireServer("Knife", targetPos)
+local function SetNoclip(state)
+    if NoclipConnection then
+        NoclipConnection:Disconnect()
+        NoclipConnection = nil
+    end
+    if state then
+        NoclipConnection = RunService.Stepped:Connect(function()
+            local char = LocalPlayer.Character
+            if char then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end)
+    end
+end
+
+local function ClearESP()
+    for _, v in ipairs(ESPFolder:GetChildren()) do
+        v:Destroy()
+    end
+end
+
+local function UpdateESP()
+    ClearESP()
+    if not Config.ESP then return end
+
+    local myHRP = select(2, GetChar())
+    if not myHRP then return end
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if IsEnemy(plr) then
+            local char, hrp, hum, head = GetChar(plr)
+            if char and hrp and head and hum then
+                local highlight = Instance.new("Highlight")
+                highlight.Adornee = char
+                highlight.FillColor = Color3.fromRGB(255, 50, 50)
+                highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+                highlight.FillTransparency = 0.6
+                highlight.OutlineTransparency = 0
+                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                highlight.Parent = ESPFolder
+
+                local bill = Instance.new("BillboardGui")
+                bill.Adornee = head
+                bill.Size = UDim2.fromOffset(140, 40)
+                bill.StudsOffset = Vector3.new(0, 2.6, 0)
+                bill.AlwaysOnTop = true
+                bill.Parent = ESPFolder
+
+                local nameLabel = Instance.new("TextLabel")
+                nameLabel.Size = UDim2.new(1, 0, 0, 16)
+                nameLabel.BackgroundTransparency = 1
+                nameLabel.Text = plr.Name
+                nameLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+                nameLabel.TextStrokeTransparency = 0.2
+                nameLabel.Font = Enum.Font.GothamBold
+                nameLabel.TextSize = 13
+                nameLabel.Parent = bill
+
+                if Config.HealthESP then
+                    local hpLabel = Instance.new("TextLabel")
+                    hpLabel.Size = UDim2.new(1, 0, 0, 14)
+                    hpLabel.Position = UDim2.fromOffset(0, 14)
+                    hpLabel.BackgroundTransparency = 1
+                    hpLabel.Text = math.floor(hum.Health) .. " HP"
+                    hpLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
+                    hpLabel.TextStrokeTransparency = 0.3
+                    hpLabel.Font = Enum.Font.Gotham
+                    hpLabel.TextSize = 12
+                    hpLabel.Parent = bill
+                end
+
+                if Config.DistanceESP then
+                    local dist = math.floor((hrp.Position - myHRP.Position).Magnitude)
+                    local distLabel = Instance.new("TextLabel")
+                    distLabel.Size = UDim2.new(1, 0, 0, 14)
+                    distLabel.Position = UDim2.fromOffset(0, Config.HealthESP and 26 or 14)
+                    distLabel.BackgroundTransparency = 1
+                    distLabel.Text = dist .. " studs"
+                    distLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+                    distLabel.TextStrokeTransparency = 0.3
+                    distLabel.Font = Enum.Font.Gotham
+                    distLabel.TextSize = 11
+                    distLabel.Parent = bill
+                end
+
+                if Config.Tracers then
+                    local line = Drawing.new("Line")
+                    line.Thickness = 1.2
+                    line.Color = Color3.fromRGB(255, 60, 60)
+                    line.Transparency = 0.4
+                    line.Visible = true
+
+                    local from = Camera:WorldToViewportPoint(myHRP.Position)
+                    local to = Camera:WorldToViewportPoint(hrp.Position)
+                    line.From = Vector2.new(from.X, from.Y)
+                    line.To = Vector2.new(to.X, to.Y)
+
+                    task.spawn(function()
+                        while line and Config.Tracers and Config.ESP do
+                            local myPos = select(2, GetChar())
+                            if not myPos or not hrp or not hrp.Parent then
+                                line:Remove()
+                                break
+                            end
+                            local f = Camera:WorldToViewportPoint(myPos.Position)
+                            local t = Camera:WorldToViewportPoint(hrp.Position)
+                            line.From = Vector2.new(f.X, f.Y)
+                            line.To = Vector2.new(t.X, t.Y)
+                            task.wait()
+                        end
+                        if line then line:Remove() end
                     end)
                 end
             end
         end
-        local char = LocalPlayer.Character
-        if char then
-            local tool = char:FindFirstChildOfClass("Tool")
-            if tool then
-                for _, v in ipairs(tool:GetDescendants()) do
-                    if v:IsA("RemoteEvent") then
-                        pcall(function()
-                            v:FireServer(targetPos)
-                        end)
-                    end
-                end
-            end
-        end
-    end)
-end
-
-local function KnifeAITick()
-    if not Config.KnifeAI then return end
-    local now = tick()
-    if now - LastKnife < Config.KnifeDelay then return end
-    LastKnife = now
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if IsEnemy(plr) then
-            local _, hrp, hum, head = GetChar(plr)
-            if hrp and hum and hum.Health > 0 then
-                local pos = (head or hrp).Position
-                FireKnife(pos)
-                FireKnife(pos + Vector3.new(0, 0.5, 0))
-            end
-        end
     end
 end
 
-local function KillAllTick()
-    if not Config.KillAll then return end
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if IsEnemy(plr) then
-            local _, hrp, hum, head = GetChar(plr)
-            if hrp and hum and hum.Health > 0 then
-                local pos = (head or hrp).Position
-                FireKnife(pos)
-                pcall(function()
-                    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
-                        if v:IsA("RemoteEvent") then
-                            local n = v.Name:lower()
-                            if n:find("kill") or n:find("damage") or n:find("hit") then
-                                pcall(function()
-                                    v:FireServer(plr)
-                                    v:FireServer(plr.Character)
-                                    v:FireServer(hum, 100)
-                                end)
-                            end
-                        end
-                    end
-                end)
-            end
-        end
-    end
-end
-
-local function CheckMyKills()
+local function CheckKills()
     for _, plr in ipairs(Players:GetPlayers()) do
         if IsEnemy(plr) then
             local _, _, hum = GetChar(plr)
+            local prev = HealthCache[plr.UserId]
             if hum then
-                local prev = HealthCache[plr.UserId]
                 local hp = hum.Health
                 if prev and prev > 0 and hp <= 0 then
-                    PlayBubble()
-                    Notify("KILL → " .. plr.Name, Theme.Green, 1.5)
+                    Rayfield:Notify({
+                        Title = "KILL",
+                        Content = "Mataste a " .. plr.Name,
+                        Duration = 2.5,
+                        Image = 4483362458,
+                    })
                 end
                 HealthCache[plr.UserId] = hp
             else
-                local prev = HealthCache[plr.UserId]
                 if prev and prev > 0 then
-                    PlayBubble()
-                    Notify("KILL → " .. plr.Name, Theme.Green, 1.5)
+                    Rayfield:Notify({
+                        Title = "KILL",
+                        Content = "Mataste a " .. plr.Name,
+                        Duration = 2.5,
+                        Image = 4483362458,
+                    })
                     HealthCache[plr.UserId] = 0
                 end
             end
@@ -300,300 +305,305 @@ local function CheckMyKills()
     end
 end
 
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "DuelosHub"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = CoreGui
+local function TriggerbotTick()
+    if not Config.Triggerbot then return end
+    local target = Mouse.Target
+    if target and target.Parent then
+        local hum = target.Parent:FindFirstChildOfClass("Humanoid") or target.Parent.Parent:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then
+            local plr = Players:GetPlayerFromCharacter(hum.Parent)
+            if plr and IsEnemy(plr) then
+                mouse1click()
+            end
+        end
+    end
+end
 
-local MenuBtn = Instance.new("TextButton")
-MenuBtn.Size = UDim2.fromOffset(84, 34)
-MenuBtn.Position = UDim2.new(0.5, -42, 0, 12)
-MenuBtn.BackgroundColor3 = Theme.Panel
-MenuBtn.Text = "Menú"
-MenuBtn.TextColor3 = Theme.Accent
-MenuBtn.Font = Enum.Font.GothamBold
-MenuBtn.TextSize = 14
-MenuBtn.ZIndex = 60
-MenuBtn.Parent = ScreenGui
-Instance.new("UICorner", MenuBtn).CornerRadius = UDim.new(0, 8)
-local ms = Instance.new("UIStroke", MenuBtn)
-ms.Color = Theme.Accent
-ms.Thickness = 1.4
+local Window = Rayfield:CreateWindow({
+    Name = "Sexus Hub",
+    LoadingTitle = "sexus hub | LOADING...",
+    LoadingSubtitle = ".gg/tvYWHS2B8",
+    Theme = "Default",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "SexusHub",
+        FileName = "Config"
+    },
+    Discord = {
+        Enabled = false,
+        Invite = "tvYWHS2B8",
+        RememberJoins = true
+    },
+    KeySystem = false,
+})
 
-local Watermark = Instance.new("Frame")
-Watermark.Size = UDim2.fromOffset(280, 26)
-Watermark.Position = UDim2.fromOffset(12, 10)
-Watermark.BackgroundColor3 = Theme.Panel
-Watermark.BorderSizePixel = 0
-Watermark.Parent = ScreenGui
-Instance.new("UICorner", Watermark).CornerRadius = UDim.new(0, 6)
-local wms = Instance.new("UIStroke", Watermark)
-wms.Color = Theme.Accent
-wms.Thickness = 1.2
-local wmLabel = Instance.new("TextLabel")
-wmLabel.Size = UDim2.new(1, -10, 1, 0)
-wmLabel.Position = UDim2.fromOffset(8, 0)
-wmLabel.BackgroundTransparency = 1
-wmLabel.Text = "Duelos  |  " .. LocalPlayer.Name .. "  |  Beta"
-wmLabel.Font = Enum.Font.GothamBold
-wmLabel.TextSize = 12
-wmLabel.TextColor3 = Theme.Accent
-wmLabel.TextXAlignment = Enum.TextXAlignment.Left
-wmLabel.Parent = Watermark
+local MainTab = Window:CreateTab("Main", 4483362458)
+local MoveTab = Window:CreateTab("Movimiento", 4483362458)
+local VisualTab = Window:CreateTab("Visuales", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
-local Main = Instance.new("Frame")
-Main.Size = UDim2.fromOffset(400, 460)
-Main.Position = UDim2.new(0.5, -200, 0.5, -230)
-Main.BackgroundColor3 = Theme.Bg
-Main.BorderSizePixel = 0
-Main.Visible = false
-Main.ClipsDescendants = true
-Main.Parent = ScreenGui
-Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
-Instance.new("UIStroke", Main).Color = Color3.fromRGB(40, 40, 55)
+MainTab:CreateSection("Combat")
 
-local TitleBar = Instance.new("Frame")
-TitleBar.Size = UDim2.new(1, 0, 0, 40)
-TitleBar.BackgroundColor3 = Theme.Panel
-TitleBar.BorderSizePixel = 0
-TitleBar.Parent = Main
-Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 12)
+MainTab:CreateToggle({
+    Name = "Aim Assist",
+    CurrentValue = false,
+    Flag = "AimAssist",
+    Callback = function(Value)
+        Config.AimAssist = Value
+    end,
+})
 
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -40, 1, 0)
-Title.Position = UDim2.fromOffset(14, 0)
-Title.BackgroundTransparency = 1
-Title.Text = "DUELOS HUB"
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 15
-Title.TextColor3 = Theme.Accent
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Parent = TitleBar
+MainTab:CreateToggle({
+    Name = "TP Enemigo",
+    CurrentValue = false,
+    Flag = "TP",
+    Callback = function(Value)
+        Config.TP = Value
+    end,
+})
 
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.fromOffset(28, 28)
-CloseBtn.Position = UDim2.new(1, -34, 0.5, -14)
-CloseBtn.BackgroundColor3 = Theme.Red
-CloseBtn.Text = "×"
-CloseBtn.TextColor3 = Color3.new(1, 1, 1)
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.TextSize = 16
-CloseBtn.Parent = TitleBar
-Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
-CloseBtn.MouseButton1Click:Connect(function() Main.Visible = false end)
+MainTab:CreateToggle({
+    Name = "Triggerbot",
+    CurrentValue = false,
+    Flag = "Triggerbot",
+    Callback = function(Value)
+        Config.Triggerbot = Value
+    end,
+})
 
-MenuBtn.MouseButton1Click:Connect(function()
-    Main.Visible = not Main.Visible
+MainTab:CreateToggle({
+    Name = "Auto Block (si el juego lo permite)",
+    CurrentValue = false,
+    Flag = "AutoBlock",
+    Callback = function(Value)
+        Config.AutoBlock = Value
+    end,
+})
+
+MainTab:CreateSection("Checks")
+
+MainTab:CreateToggle({
+    Name = "Visible Check",
+    CurrentValue = true,
+    Flag = "VisibleCheck",
+    Callback = function(Value)
+        Config.VisibleCheck = Value
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Team Check",
+    CurrentValue = true,
+    Flag = "TeamCheck",
+    Callback = function(Value)
+        Config.TeamCheck = Value
+    end,
+})
+
+MoveTab:CreateSection("Movimiento")
+
+MoveTab:CreateSlider({
+    Name = "WalkSpeed",
+    Range = {16, 200},
+    Increment = 1,
+    CurrentValue = 16,
+    Flag = "WalkSpeed",
+    Callback = function(Value)
+        Config.WalkSpeed = Value
+        local _, _, hum = GetChar()
+        if hum then hum.WalkSpeed = Value end
+    end,
+})
+
+MoveTab:CreateToggle({
+    Name = "Infinite Jump",
+    CurrentValue = false,
+    Flag = "InfiniteJump",
+    Callback = function(Value)
+        Config.InfiniteJump = Value
+    end,
+})
+
+MoveTab:CreateToggle({
+    Name = "Noclip",
+    CurrentValue = false,
+    Flag = "Noclip",
+    Callback = function(Value)
+        Config.Noclip = Value
+        SetNoclip(Value)
+    end,
+})
+
+VisualTab:CreateSection("ESP & Visuales")
+
+VisualTab:CreateToggle({
+    Name = "ESP Enemigos",
+    CurrentValue = false,
+    Flag = "ESP",
+    Callback = function(Value)
+        Config.ESP = Value
+        if not Value then ClearESP() end
+    end,
+})
+
+VisualTab:CreateToggle({
+    Name = "FOV Circle",
+    CurrentValue = false,
+    Flag = "FOVCircle",
+    Callback = function(Value)
+        Config.FOVCircle = Value
+        FOVCircle.Visible = Value
+    end,
+})
+
+VisualTab:CreateToggle({
+    Name = "Tracers",
+    CurrentValue = false,
+    Flag = "Tracers",
+    Callback = function(Value)
+        Config.Tracers = Value
+    end,
+})
+
+VisualTab:CreateToggle({
+    Name = "Health Bar ESP",
+    CurrentValue = true,
+    Flag = "HealthESP",
+    Callback = function(Value)
+        Config.HealthESP = Value
+    end,
+})
+
+VisualTab:CreateToggle({
+    Name = "Distance ESP",
+    CurrentValue = true,
+    Flag = "DistanceESP",
+    Callback = function(Value)
+        Config.DistanceESP = Value
+    end,
+})
+
+SettingsTab:CreateSection("Aim Settings")
+
+SettingsTab:CreateSlider({
+    Name = "FOV",
+    Range = {40, 400},
+    Increment = 1,
+    Suffix = "°",
+    CurrentValue = 220,
+    Flag = "FOV",
+    Callback = function(Value)
+        Config.FOV = Value
+        FOVCircle.Radius = Value
+    end,
+})
+
+SettingsTab:CreateSlider({
+    Name = "Smoothness",
+    Range = {5, 50},
+    Increment = 1,
+    CurrentValue = 28,
+    Flag = "Smoothness",
+    Callback = function(Value)
+        Config.Smoothness = Value / 100
+    end,
+})
+
+SettingsTab:CreateSlider({
+    Name = "Prediction",
+    Range = {0, 50},
+    Increment = 1,
+    CurrentValue = 18,
+    Flag = "Prediction",
+    Callback = function(Value)
+        Config.Prediction = Value / 100
+    end,
+})
+
+SettingsTab:CreateSection("TP Settings")
+
+SettingsTab:CreateSlider({
+    Name = "TP Cooldown",
+    Range = {1, 50},
+    Increment = 1,
+    Suffix = "ms",
+    CurrentValue = 5,
+    Flag = "TPCooldown",
+    Callback = function(Value)
+        Config.TPCooldown = Value / 1000
+    end,
+})
+
+SettingsTab:CreateSection("Keybind")
+
+SettingsTab:CreateKeybind({
+    Name = "Abrir / Cerrar Menú",
+    CurrentKeybind = "RightShift",
+    HoldToInteract = false,
+    Flag = "MenuKey",
+    Callback = function()
+        -- Rayfield ya maneja el toggle interno, este es solo visual
+    end,
+})
+
+UserInputService.JumpRequest:Connect(function()
+    if Config.InfiniteJump then
+        local _, _, hum = GetChar()
+        if hum then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
 end)
 
-do
-    local dragging, start, pos
-    TitleBar.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            start = i.Position
-            pos = Main.Position
-        end
-    end)
-    TitleBar.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-            local d = i.Position - start
-            Main.Position = UDim2.new(pos.X.Scale, pos.X.Offset + d.X, pos.Y.Scale, pos.Y.Offset + d.Y)
-        end
-    end)
-end
-
-local TabBar = Instance.new("Frame")
-TabBar.Size = UDim2.new(1, -16, 0, 30)
-TabBar.Position = UDim2.fromOffset(8, 46)
-TabBar.BackgroundTransparency = 1
-TabBar.Parent = Main
-
-local MainTabBtn = Instance.new("TextButton")
-MainTabBtn.Size = UDim2.new(1, 0, 1, 0)
-MainTabBtn.BackgroundColor3 = Theme.Accent
-MainTabBtn.Text = "Main"
-MainTabBtn.Font = Enum.Font.GothamBold
-MainTabBtn.TextSize = 13
-MainTabBtn.TextColor3 = Color3.new(1, 1, 1)
-MainTabBtn.Parent = TabBar
-Instance.new("UICorner", MainTabBtn).CornerRadius = UDim.new(0, 6)
-
-local mainPage = Instance.new("ScrollingFrame")
-mainPage.Size = UDim2.new(1, -16, 1, -88)
-mainPage.Position = UDim2.fromOffset(8, 82)
-mainPage.BackgroundTransparency = 1
-mainPage.BorderSizePixel = 0
-mainPage.ScrollBarThickness = 3
-mainPage.ScrollBarImageColor3 = Theme.Accent
-mainPage.Parent = Main
-
-local list = Instance.new("UIListLayout", mainPage)
-list.Padding = UDim.new(0, 6)
-list.SortOrder = Enum.SortOrder.LayoutOrder
-list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    mainPage.CanvasSize = UDim2.fromOffset(0, list.AbsoluteContentSize.Y + 12)
+RunService.RenderStepped:Connect(function()
+    if Config.FOVCircle then
+        FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+        FOVCircle.Radius = Config.FOV
+        FOVCircle.Visible = true
+    else
+        FOVCircle.Visible = false
+    end
 end)
 
-local function CreateToggle(parent, text, key, cb)
-    local f = Instance.new("Frame")
-    f.Size = UDim2.new(1, 0, 0, 36)
-    f.BackgroundColor3 = Theme.Card
-    f.BorderSizePixel = 0
-    f.Parent = parent
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 7)
-
-    local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(0.7, 0, 1, 0)
-    l.Position = UDim2.fromOffset(12, 0)
-    l.BackgroundTransparency = 1
-    l.Text = text
-    l.Font = Enum.Font.GothamMedium
-    l.TextSize = 13
-    l.TextColor3 = Theme.Text
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Parent = f
-
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.fromOffset(42, 22)
-    b.Position = UDim2.new(1, -52, 0.5, -11)
-    b.BackgroundColor3 = Config[key] and Theme.Green or Color3.fromRGB(45, 45, 55)
-    b.Text = ""
-    b.Parent = f
-    Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
-
-    local c = Instance.new("Frame")
-    c.Size = UDim2.fromOffset(16, 16)
-    c.Position = Config[key] and UDim2.new(1, -19, 0.5, -8) or UDim2.fromOffset(3, 3)
-    c.BackgroundColor3 = Color3.new(1, 1, 1)
-    c.Parent = b
-    Instance.new("UICorner", c).CornerRadius = UDim.new(1, 0)
-
-    b.MouseButton1Click:Connect(function()
-        Config[key] = not Config[key]
-        local on = Config[key]
-        b.BackgroundColor3 = on and Theme.Green or Color3.fromRGB(45, 45, 55)
-        c.Position = on and UDim2.new(1, -19, 0.5, -8) or UDim2.fromOffset(3, 3)
-        Notify(text .. (on and " ON" or " OFF"), on and Theme.Green or Theme.Dim, 0.7)
-        if cb then cb(on) end
-    end)
-end
-
-local function CreateSlider(parent, text, key, min, max, def)
-    local f = Instance.new("Frame")
-    f.Size = UDim2.new(1, 0, 0, 50)
-    f.BackgroundColor3 = Theme.Card
-    f.BorderSizePixel = 0
-    f.Parent = parent
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 7)
-
-    local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(1, -12, 0, 18)
-    l.Position = UDim2.fromOffset(10, 5)
-    l.BackgroundTransparency = 1
-    l.Text = text .. "  •  " .. def
-    l.Font = Enum.Font.Gotham
-    l.TextSize = 12
-    l.TextColor3 = Theme.Text
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Parent = f
-
-    local bar = Instance.new("Frame")
-    bar.Size = UDim2.new(1, -20, 0, 7)
-    bar.Position = UDim2.fromOffset(10, 30)
-    bar.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    bar.BorderSizePixel = 0
-    bar.Parent = f
-    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
-
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.fromScale(math.clamp((def - min) / (max - min), 0, 1), 1)
-    fill.BackgroundColor3 = Theme.Accent
-    fill.BorderSizePixel = 0
-    fill.Parent = bar
-    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
-
-    local sliding = false
-    bar.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then sliding = true end
-    end)
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if sliding and i.UserInputType == Enum.UserInputType.MouseMovement then
-            local r = math.clamp((i.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
-            local v = math.floor(min + (max - min) * r + 0.5)
-            Config[key] = v
-            fill.Size = UDim2.fromScale(r, 1)
-            l.Text = text .. "  •  " .. v
-        end
-    end)
-end
-
-CreateToggle(mainPage, "Aim Assist", "AimAssist")
-CreateToggle(mainPage, "TP Enemigo (0.10s)", "TP")
-CreateToggle(mainPage, "Knife AI (0.05s)", "KnifeAI")
-CreateToggle(mainPage, "Kill All", "KillAll")
-CreateToggle(mainPage, "Visible Check", "VisibleCheck")
-CreateToggle(mainPage, "Team Check", "TeamCheck")
-CreateSlider(mainPage, "FOV", "FOV", 40, 360, Config.FOV)
-CreateSlider(mainPage, "Smoothness", "Smoothness", 3, 30, 14)
-
-Connections[#Connections + 1] = RunService.Heartbeat:Connect(function()
+RunService.Heartbeat:Connect(function()
     if not Loaded then return end
     local char, hrp, hum = GetChar()
     if not char then return end
 
-    local smooth = (Config.Smoothness > 1) and (Config.Smoothness / 100) or Config.Smoothness
-    Config.Smoothness = math.clamp(smooth, 0.04, 0.35)
+    if hum and Config.WalkSpeed ~= 16 then
+        hum.WalkSpeed = Config.WalkSpeed
+    end
 
     if Config.AimAssist then
-        local plr, part = GetBestEnemy(true)
-        if part then
-            CurrentTarget = plr
-            AimAt(part)
-        else
-            CurrentTarget = nil
-        end
+        local _, part = GetBestEnemy()
+        if part then AimAt(part) end
     end
 
     if Config.TP then
-        local plr, part = GetClosestEnemy3D()
+        local plr = GetClosestEnemy3D()
         if plr then
             local _, eHrp = GetChar(plr)
-            if eHrp then
-                DoTP(eHrp)
-            end
+            if eHrp then DoTP(eHrp) end
         end
     end
 
-    if Config.KnifeAI then
-        KnifeAITick()
+    if Config.Triggerbot then
+        TriggerbotTick()
     end
 
-    if Config.KillAll then
-        KillAllTick()
+    if Config.ESP then
+        UpdateESP()
     end
 
-    CheckMyKills()
-end)
-
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Config.UIKey then
-        Main.Visible = not Main.Visible
-    end
+    CheckKills()
 end)
 
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.3)
+    task.wait(0.4)
     LastTP = 0
-    LastKnife = 0
+    local _, _, hum = GetChar()
+    if hum then hum.WalkSpeed = Config.WalkSpeed end
+    if Config.Noclip then SetNoclip(true) end
 end)
 
 Players.PlayerRemoving:Connect(function(plr)
@@ -601,5 +611,12 @@ Players.PlayerRemoving:Connect(function(plr)
 end)
 
 Loaded = true
-Notify("Duelos Hub listo — todo OFF", Theme.Accent, 1.4)
-print("[Duelos Hub] Loaded")
+
+Rayfield:Notify({
+    Title = "Sexus Hub",
+    Content = "Cargado correctamente",
+    Duration = 3.5,
+    Image = 4483362458,
+})
+
+print("[Sexus Hub] Loaded")
