@@ -653,7 +653,7 @@ setreadonly(mt, true)
 
 local Window = Rayfield:CreateWindow({
     Name = "Sexus Hub",
-    LoadingTitle = "sexus hub",
+    LoadingTitle = "Sexus Hub",
     LoadingSubtitle = ".gg/tvYWHS2B8",
     Theme = "Default",
     ConfigurationSaving = { Enabled = true, FolderName = "SexusHub", FileName = "Config" },
@@ -666,6 +666,7 @@ local MoveTab = Window:CreateTab("Movimiento", 4483362458)
 local VisualTab = Window:CreateTab("Visuales", 4483362458)
 local KnifeTab = Window:CreateTab("Knife", 4483362458)
 local HitboxTab = Window:CreateTab("Hitbox", 4483362458)
+local EmotesTab = Window:CreateTab("Emotes", 4483362458)
 
 KnifeTab:CreateSection("Knife & Kill All (Solo Enemigos)")
 KnifeTab:CreateToggle({
@@ -757,6 +758,22 @@ VisualTab:CreateToggle({ Name = "Skeleton ESP", CurrentValue = false, Flag = "Sk
 VisualTab:CreateToggle({ Name = "Tracers", CurrentValue = false, Flag = "Tracers", Callback = function(v) Config.Tracers = v end })
 VisualTab:CreateSection("Personalización Visual")
 VisualTab:CreateToggle({ Name = "Armas Rainbow (Solo Tú)", CurrentValue = false, Flag = "RainbowWeapons", Callback = function(v) Config.RainbowWeapons = v end })
+
+EmotesTab:CreateSection("El script de emotes")
+EmotesTab:CreateButton({
+    Name = "Cargar Menú de Emotes",
+    Callback = function()
+        pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/7yd7/Hub/refs/heads/Branch/GUIS/Emotes.lua"))()
+            Rayfield:Notify({
+                Title = "Sexus Hub",
+                Content = "¡El script de emotes cargado correctamente!",
+                Duration = 2.5,
+                Image = 4483362458,
+            })
+        end)
+    end,
+})
 
 UserInputService.JumpRequest:Connect(function()
     if Config.InfiniteJump then
@@ -863,7 +880,7 @@ Loaded = true
 
 Rayfield:Notify({
     Title = "Sexus Hub",
-    Content = "Tracers, Box, Esqueleto y Rainbow Actualizados",
+    Content = ".gg/tvYWHS2B8",
     Duration = 2.5,
     Image = 4483362458,
 })
