@@ -214,6 +214,9 @@ local Config = {
     AimAssist = false,
     AimAssistFOVVisible = false,
     AimAssistFOV = 150,
+    SilentAim = false,
+    SilentFOVVisible = false,
+    SilentFOV = 150,
     TP = false,
     TeamCheck = true,
     VisibleCheck = true,
@@ -247,6 +250,9 @@ local HitboxCache = {}
 local LastHitboxUpdate = 0
 local SpawnCFrame = nil
 local TexturesRemoved = false
+local SilentTarget = nil
+
+local OffsetAbajo = 4.5
 
 local ESPFolder = Instance.new("Folder")
 ESPFolder.Name = "SexusESP"
@@ -259,6 +265,14 @@ AimFOVCircle.Radius = Config.AimAssistFOV
 AimFOVCircle.Filled = false
 AimFOVCircle.Visible = false
 AimFOVCircle.Transparency = 1
+
+local SilentFOVCircle = Drawing.new("Circle")
+SilentFOVCircle.Thickness = 1.5
+SilentFOVCircle.NumSides = 64
+SilentFOVCircle.Radius = Config.SilentFOV
+SilentFOVCircle.Filled = false
+SilentFOVCircle.Visible = false
+SilentFOVCircle.Transparency = 1
 
 local ActiveRainbowIndicators = {}
 
@@ -286,17 +300,21 @@ local function UpdateSpawnPosition()
     end
 end
 
-local function HasGreenArrow(char)
-    if not char then return false end
-    for _, obj in ipairs(char:GetDescendants()) do
-        if obj:IsA("BillboardGui") then
-            for _, child in ipairs(obj:GetDescendants()) do
-                if child:IsA("ImageLabel") or child:IsA("TextLabel") then
-                    local color = child:IsA("ImageLabel") and child.ImageColor3 or child.TextColor3
-                    if color and color.G > (color.R * 1.5) and color.G > (color.B * 1.5) and color.G > 0.4 then
-                        return true
-                    end
-                end
+local function tieneFlechaVerde(c)
+    if not c then return false end
+    for _, v in ipairs(c:GetChildren()) do
+        if (v:IsA("BillboardGui") or v:IsA("Folder")) then
+            local n = v.Name:lower()
+            if n:find("arrow") or n:find("green") or n:find("team") then
+                return true
+            end
+        end
+    end
+    local h = c:FindFirstChild("Head")
+    if h then
+        for _, v in ipairs(h:GetChildren()) do
+            if v:IsA("BillboardGui") then
+                return true
             end
         end
     end
@@ -306,7 +324,7 @@ end
 local function IsEnemy(plr)
     if plr == LocalPlayer or not plr.Character then return false end
     local char = plr.Character
-    if HasGreenArrow(char) then return false end
+    if tieneFlechaVerde(char) then return false end
     
     local success, isFriend = pcall(function()
         return LocalPlayer:IsFriendsWith(plr.UserId)
@@ -367,6 +385,31 @@ local function AimAt(targetPart)
     local targetCFrame = CFrame.new(Camera.CFrame.Position, predictedPosition)
     Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, math.clamp(Config.Smoothness, 0.01, 1))
 end
+
+-- Metatable Hook para Silent Aim
+pcall(function()
+    local mt = getrawmetatable(game)
+    local oldIndex = mt.__index
+    setreadonly(mt, false)
+
+    mt.__index = newcclosure(function(self, key)
+        if Config.SilentAim and key == "Hit" and self == Mouse then
+            if SilentTarget and SilentTarget.Parent then
+                local sp, onScreen = Camera:WorldToViewportPoint(SilentTarget.Position)
+                if onScreen then
+                    local center = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y * 0.5)
+                    local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                    if dist <= Config.SilentFOV then
+                        return SilentTarget.CFrame
+                    end
+                end
+            end
+        end
+        return oldIndex(self, key)
+    end)
+
+    setreadonly(mt, true)
+end)
 
 local function GetBestTargetForTP()
     local bestPlr, bestHrp = nil, nil
@@ -472,8 +515,9 @@ local function DoTP(eHrp, targetPlayer)
             myHum.PlatformStand = true
             myHum:ChangeState(Enum.HumanoidStateType.Physics)
         end
-        local targetPos = eHrp.Position + Vector3.new(0, -4.9, 0)
-        myHRP.CFrame = CFrame.new(targetPos) * CFrame.Angles(math.rad(-90), math.rad(180), 0)
+        local targetPos = eHrp.Position
+        -- Modificado para que el CFrame mire hacia arriba utilizando CFrame.lookAt desde la posición destino hacia arriba
+        myHRP.CFrame = CFrame.lookAt(Vector3.new(targetPos.X, targetPos.Y - OffsetAbajo, targetPos.Z), Vector3.new(targetPos.X, targetPos.Y - OffsetAbajo + 1, targetPos.Z))
         myHRP.AssemblyLinearVelocity = Vector3.zero
         myHRP.AssemblyAngularVelocity = Vector3.zero
     end)
@@ -1190,6 +1234,17 @@ MainTab:CreateToggle("Visible Check", Config.VisibleCheck, function(v) Config.Vi
 MainTab:CreateToggle("Mostrar FOV Aim Assist", Config.AimAssistFOVVisible, function(v) Config.AimAssistFOVVisible = v AimFOVCircle.Visible = v end)
 MainTab:CreateSlider("FOV Aim Assist", 20, 400, 150, function(v) Config.AimAssistFOV = v AimFOVCircle.Radius = v end)
 
+MainTab:CreateSection("Silent Aim")
+MainTab:CreateToggle("Silent Aim", Config.SilentAim, function(v) Config.SilentAim = v end)
+MainTab:CreateToggle("Mostrar FOV Silent Aim", Config.SilentFOVVisible, function(v) 
+    Config.SilentFOVVisible = v 
+    SilentFOVCircle.Visible = v 
+end)
+MainTab:CreateSlider("Customizar FOV Silent Aim", 20, 400, 150, function(v) 
+    Config.SilentFOV = v 
+    SilentFOVCircle.Radius = v 
+end)
+
 local MoveTab = CreateTab("Movimiento")
 MoveTab:CreateSection("Movimiento General")
 MoveTab:CreateSlider("WalkSpeed", 16, 200, 16, function(v)
@@ -1275,6 +1330,15 @@ RunService.RenderStepped:Connect(function()
         AimFOVCircle.Visible = false
     end
 
+    if Config.SilentFOVVisible then
+        SilentFOVCircle.Position = screenCenter
+        SilentFOVCircle.Radius = Config.SilentFOV
+        SilentFOVCircle.Color = rainbowColor
+        SilentFOVCircle.Visible = true
+    else
+        SilentFOVCircle.Visible = false
+    end
+
     for indicator, _ in pairs(ActiveRainbowIndicators) do
         if indicator and indicator.Parent then
             indicator.BackgroundColor3 = rainbowColor
@@ -1298,6 +1362,13 @@ RunService.Heartbeat:Connect(function()
     if Config.AimAssist then
         local _, part = GetTargetByFOV(Config.AimAssistFOV)
         if part then AimAt(part) end
+    end
+
+    if Config.SilentAim then
+        local _, part = GetTargetByFOV(Config.SilentFOV)
+        SilentTarget = part
+    else
+        SilentTarget = nil
     end
 
     if Config.TP then
